@@ -1,0 +1,66 @@
+NSE_20= [
+    "EGAD", #Eaagads
+    "KAPC", #Kapchorua
+    "KUKZ", #Kakuzi
+    "LIMT", #Limuru Tea
+    "SASN", #Sasini
+    "WTK", #Williamson Tea
+    "CGEN", #Car and General
+    "ABSA", #Absa
+    "SBIC", #Stanbic
+    "IMH", #I&M
+    "DTK", #Diamond Trust Bank
+    "SCBK", #Standard Chartered
+    "EQTY", #Equity
+    "COOP", #Co-operative
+    "BKG", #BK Group
+    "HFCK", #HF Group
+    "KCB", #KCB 
+    "NCBA", #NCBA
+    "XPRS", #Express
+    "SMER", #Sameer Africa
+    "KQ", #Kenya Airways
+    "NMG", #Nation Media
+    "SGL", #Standard Group
+    "TPSE", #TPS Eastern Africa(Serena)
+    "SCAN", #Scangroup
+    "UCHM", #Uchumi Supermarket
+    "LKL", #Longhorn Publishers
+    "DCON", #Deacons
+    "NBV", #Nairobi Business Ventures
+    "ARM", #Athi River Mining
+    "BAMB", #Bamburi Cement
+    "CRWN", #Crown Paints
+    "CABL", #E.A Cables
+    "PORT", #E.A Portland Cement
+    "TOTL", #Total Kenya
+    "KEGN", #KenGen
+    "KPLC", #Kenya Power
+    "UMME", #Umeme
+    "JUB", #Jubilee 
+    "SLM", #Sanlam Allianz
+    "KNRE", #Kenya Re-Insurance
+    "LBTY", #Liberty
+    "BRIT", #Britam
+    "CIC", #CIC Insurance
+    "OCH", #Olympia Capital
+    "CTUM", #Centum
+    "TCL", #Trans-Century
+    "HAFR", #Home Afrika
+    "KUVR", #Kurwitu
+    "NSE", #Nairobi Securities Exchange
+    "BOC", #B.O.C
+    "BAT", #British American Tobacco
+    "CARB", #Carbacid
+    "EABL", #East African Breweries
+    "MSC", #Mumias Sugar
+    "UNGA", #Unga Group
+    "EVRD", #Eveready
+    "AMAC", #Africa Mega Agricorp
+    "FTGH", #Flame Tree Group
+    "SKL.O0000", #Shri Krishana Overseas
+    "SCOM", #Safaricom
+    "LAPR", #Laptrust Imara
+    "GLD", #New Gold Issuer
+    "SMWF.E0000", #Satrix MSCI World Feeder ETF
+]
