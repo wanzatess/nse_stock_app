@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:nse_stock_app/screens/home_screen.dart';
+import 'package:nse_stock_app/screens/search_screen.dart';
+import 'package:nse_stock_app/screens/top_stocks_screen.dart';
+import 'package:nse_stock_app/screens/market_overview_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -12,98 +14,85 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Stock Predictor',
+      debugShowCheckedModeBanner: false,
+      title: 'NSE Stock Predictor',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.green,
+          brightness: Brightness.light,
+        ),
+        useMaterial3: true,
+        cardTheme: CardThemeData(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
       ),
-      home: const MyHomePage(title: 'NSE 20 Stock Predictor'),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.green,
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+      themeMode: ThemeMode.system,
+      home: const MainScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-  final String title;
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  final symbolController = TextEditingController();
-  String prediction = "";
+class _MainScreenState extends State<MainScreen> {
+  int _selectedIndex = 0;
 
-  @override
-  void dispose() {
-    symbolController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _predictStock() async {
-    final symbol = symbolController.text.trim().toUpperCase();
-
-    if (symbol.isEmpty) {
-      setState(() {
-        prediction = "Please enter a stock symbol.";
-      });
-      return;
-    }
-
-    final result = await getPrediction(symbol);
-
-    setState(() {
-      prediction = result;
-    });
-  }
+  final List<Widget> _screens = [
+    const HomeScreen(),
+    const SearchScreen(),
+    const TopStocksScreen(),
+    const SizedBox(),
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              controller: symbolController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: 'Stock Symbol (e.g., EGAD)',
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _predictStock,
-              child: const Text("Predict Buy/Sell/Hold"),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              "Prediction: $prediction",
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
+      body: _screens[_selectedIndex],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (index) {
+          setState(() {
+            _selectedIndex = index;
+          });
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.search_outlined),
+            selectedIcon: Icon(Icons.search),
+            label: 'Search',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.trending_up_outlined),
+            selectedIcon: Icon(Icons.trending_up),
+            label: 'Top Stocks',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: 'Market',
+          ),
+        ],
       ),
     );
-  }
-}
-
-// ----------------- API CALL -----------------
-Future<String> getPrediction(String symbol) async {
-  final url = Uri.parse("http://192.168.1.181:8001/predict");
-  final response = await http.post(
-    url,
-    headers: {"Content-Type": "application/json"},
-    body: jsonEncode({"symbol": symbol}),
-  );
-
-  if (response.statusCode == 200) {
-    final data = jsonDecode(response.body);
-    return data["prediction"];
-  } else {
-    return "Error: ${response.statusCode}";
   }
 }
