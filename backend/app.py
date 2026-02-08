@@ -433,4 +433,9 @@ def get_history(symbol: str, days: int = 30):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    import os
+
+    # Use Railway's port if available, otherwise default to 8001 for local testing
+    port = int(os.environ.get("PORT", 8001))
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
