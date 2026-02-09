@@ -31,7 +31,7 @@ data_path = "../data/processed/NSE_20_stocks_2013_2025_features_target.csv"
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 os.makedirs(MODEL_DIR, exist_ok=True)
 MODEL_PATH = os.path.join(MODEL_DIR, "stock_model.pkl")
-MODEL_URL = "https://drive.google.com/uc?id=1ewS_wYEWWxiJKu7JNeanXIsJwbR4ggt1"
+MODEL_URL = "https://drive.google.com/uc?export=download&id=1ewS_wYEWWxiJKu7JNeanXIsJwbR4ggt1"
 
 # Cache for live data (15 minute cache)
 live_data_cache = {}
@@ -43,7 +43,7 @@ def reload_data_if_needed():
     try:
         current_modified = os.path.getmtime(data_path)
         if last_modified is None or current_modified > last_modified:
-            print(f"🔄 Reloading data... (last modified: {datetime.fromtimestamp(current_modified)})")
+            print(f"📄 Reloading data... (last modified: {datetime.fromtimestamp(current_modified)})")
             df = pd.read_csv(data_path, low_memory=False)
             df['date'] = pd.to_datetime(df['date'], errors='coerce')
             last_modified = current_modified
@@ -59,12 +59,37 @@ def download_model_if_needed():
     if not os.path.exists(MODEL_PATH):
         print("Model not found locally. Downloading from Google Drive...")
         try:
-            r = requests.get(MODEL_URL, stream=True)
-            r.raise_for_status()
-            with open(MODEL_PATH, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            print("✅ Model downloaded successfully")
+            # Use gdown library for reliable Google Drive downloads
+            try:
+                import gdown
+                gdown.download(id="1ewS_wYEWWxiJKu7JNeanXIsJwbR4ggt1", output=MODEL_PATH, quiet=False)
+                print("✅ Model downloaded successfully")
+            except ImportError:
+                # Fallback to requests with confirmation handling
+                print("Using requests fallback...")
+                session = requests.Session()
+                response = session.get(MODEL_URL, stream=True)
+                
+                # Check for virus scan warning and get confirmation token
+                token = None
+                for key, value in response.cookies.items():
+                    if key.startswith('download_warning'):
+                        token = value
+                        break
+                
+                # If token exists, make confirmed request
+                if token:
+                    params = {'confirm': token}
+                    response = session.get(MODEL_URL, params=params, stream=True)
+                
+                response.raise_for_status()
+                
+                # Download the file
+                with open(MODEL_PATH, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                print("✅ Model downloaded successfully")
         except Exception as e:
             print(f"❌ Failed to download model: {e}")
             raise e
