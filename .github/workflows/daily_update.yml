@@ -33,7 +33,7 @@ jobs:
     
     - name: Run NSE data fetcher
       run: |
-        python nse_live_fetcher_fixed.py --update --db-path data/processed/NSE_20_stocks_2013_2025_features_target.csv
+        python nse_live_fetcher.py --update --db-path data/processed/NSE_20_stocks_2013_2025_features_target.csv
     
     - name: Commit and push updated data
       run: |
