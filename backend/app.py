@@ -4,12 +4,12 @@ from pydantic import BaseModel
 import pandas as pd
 import numpy as np
 import joblib
-import pickle
 import os
 from typing import Optional, List
 from datetime import datetime, timedelta
 import requests
 from bs4 import BeautifulSoup
+from pathlib import Path
 
 app = FastAPI()
 
@@ -26,39 +26,52 @@ app.add_middleware(
 df = None
 model = None
 last_modified = None
-data_path = "../data/processed/NSE_20_stocks_2013_2025_features_target.csv"
 
-# Model setup
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
-os.makedirs(MODEL_DIR, exist_ok=True)
-MODEL_PATH = os.path.join(MODEL_DIR, "stock_model.pkl")
+# ============================================================================
+# CORRECTED FILE PATHS FOR YOUR PROJECT STRUCTURE
+# ============================================================================
+# Your structure: NSE_STOCK_APP/backend/app.py and NSE_STOCK_APP/data/processed/file.csv
+# So from backend/app.py, the data file is at: ../data/processed/
 
-# Updated Google Drive ID (from your gdown attempt in the original code)
-GOOGLE_DRIVE_FILE_ID = "1ewS_wYEWWxiJKu7JNeanXIsJwbR4ggt1"
+# Get the absolute path to the project root
+# app.py is in backend/, so go up one level to get to NSE_STOCK_APP/
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Construct data path relative to project root
+data_path = os.path.join(BASE_DIR, "data", "processed", "NSE_20_stocks_2013_2025_features_target.csv")
+
+print(f"📁 Project structure:")
+print(f"   Base directory: {BASE_DIR}")
+print(f"   Data path: {data_path}")
+print(f"   Data file exists: {os.path.exists(data_path)}")
+
+# Model setup with Render Persistent Disk support
+PERSISTENT_DISK = os.environ.get('PERSISTENT_DISK_PATH', os.path.join(BASE_DIR, 'backend', 'models'))
+MODEL_FILENAME = "stock_model.pkl"
+MODEL_PATH = os.path.join(PERSISTENT_DISK, MODEL_FILENAME)
+
+# Google Drive configuration
+GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1ewS_wYEWWxiJKu7JNeanXIsJwbR4ggt1')
+
+print(f"📦 Model configuration:")
+print(f"   Persistent disk: {PERSISTENT_DISK}")
+print(f"   Model path: {MODEL_PATH}")
 
 # Cache for live data (15 minute cache)
 live_data_cache = {}
 cache_timestamps = {}
 CACHE_DURATION = 900  # 15 minutes in seconds
 
-def reload_data_if_needed():
-    global df, last_modified
+def ensure_model_directory():
+    """Create model directory if it doesn't exist"""
     try:
-        current_modified = os.path.getmtime(data_path)
-        if last_modified is None or current_modified > last_modified:
-            print(f"📄 Reloading data... (last modified: {datetime.fromtimestamp(current_modified)})")
-            df = pd.read_csv(data_path, low_memory=False)
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            last_modified = current_modified
-            print(f"✅ Data reloaded! {len(df)} records")
+        Path(PERSISTENT_DISK).mkdir(parents=True, exist_ok=True)
+        print(f"✅ Model directory ready: {PERSISTENT_DISK}")
     except Exception as e:
-        print(f"⚠️ Error reloading data: {e}")
-        if df is None:
-            df = pd.read_csv(data_path, low_memory=False)
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        print(f"⚠️ Could not create model directory: {e}")
 
 def download_from_google_drive(file_id, destination):
-    """Download a file from Google Drive using direct download link"""
+    """Download a file from Google Drive"""
     
     def get_confirm_token(response):
         for key, value in response.cookies.items():
@@ -68,140 +81,138 @@ def download_from_google_drive(file_id, destination):
 
     def save_response_content(response, destination):
         CHUNK_SIZE = 32768
+        total_size = 0
         with open(destination, "wb") as f:
             for chunk in response.iter_content(CHUNK_SIZE):
                 if chunk:
                     f.write(chunk)
+                    total_size += len(chunk)
+                    if total_size % (10 * 1024 * 1024) == 0:
+                        print(f"   Downloaded: {total_size / (1024 * 1024):.1f} MB...")
 
     URL = "https://docs.google.com/uc?export=download"
     
     session = requests.Session()
-    response = session.get(URL, params={'id': file_id}, stream=True)
+    response = session.get(URL, params={'id': file_id}, stream=True, timeout=300)
     token = get_confirm_token(response)
 
     if token:
         params = {'id': file_id, 'confirm': token}
-        response = session.get(URL, params=params, stream=True)
+        response = session.get(URL, params=params, stream=True, timeout=300)
 
     save_response_content(response, destination)
 
-def download_model_if_needed():
-    """Download the model from Google Drive if it doesn't exist locally"""
-    global MODEL_PATH
+def download_model_to_persistent_disk():
+    """Download model to persistent disk (one-time operation)"""
     
     if os.path.exists(MODEL_PATH):
-        print(f"✅ Model found at {MODEL_PATH}")
-        return
+        file_size_mb = os.path.getsize(MODEL_PATH) / (1024 * 1024)
+        print(f"✅ Model found on persistent disk ({file_size_mb:.2f} MB)")
+        return True
     
-    print("📥 Model not found locally. Downloading from Google Drive...")
+    print("📥 Model not found. Starting download...")
+    print("⏳ This may take a few minutes for large models...")
     
     try:
-        # Try using gdown first (more reliable for large files)
+        # Try gdown first
         try:
             import gdown
             url = f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}"
             gdown.download(url, MODEL_PATH, quiet=False)
-            print("✅ Model downloaded successfully using gdown")
-            return
+            
+            if os.path.exists(MODEL_PATH):
+                file_size_mb = os.path.getsize(MODEL_PATH) / (1024 * 1024)
+                print(f"✅ Model downloaded successfully ({file_size_mb:.2f} MB)")
+                return True
+            
         except ImportError:
-            print("⚠️ gdown not available, using fallback method...")
+            print("⚠️ gdown not installed, using fallback...")
         
-        # Fallback to manual download
+        # Fallback
         download_from_google_drive(GOOGLE_DRIVE_FILE_ID, MODEL_PATH)
         
-        # Verify the download
         if os.path.exists(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 0:
-            print(f"✅ Model downloaded successfully ({os.path.getsize(MODEL_PATH)} bytes)")
+            file_size_mb = os.path.getsize(MODEL_PATH) / (1024 * 1024)
+            print(f"✅ Model downloaded ({file_size_mb:.2f} MB)")
+            return True
         else:
-            raise Exception("Downloaded file is empty or doesn't exist")
+            raise Exception("Downloaded file is empty or missing")
             
     except Exception as e:
-        print(f"❌ Failed to download model: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Failed to download model file: {str(e)}"
-        )
+        print(f"❌ Download failed: {e}")
+        print("   App will continue without model (predictions unavailable)")
+        return False
 
 def load_model():
-    """Load the machine learning model with enhanced error handling"""
+    """Load model from persistent disk"""
     global model
     
     if model is not None:
-        print("✅ Model already loaded")
-        return
+        return True
+    
+    ensure_model_directory()
+    
+    # Download if needed
+    if not download_model_to_persistent_disk():
+        return False
+    
+    print(f"📦 Loading model from {MODEL_PATH}...")
     
     try:
-        # Ensure model file exists
-        download_model_if_needed()
+        model = joblib.load(MODEL_PATH)
+        print("✅ Model loaded successfully!")
         
-        print(f"📦 Loading model from {MODEL_PATH}...")
-        
-        # Try different loading methods
-        try:
-            # Method 1: Standard joblib load
-            model = joblib.load(MODEL_PATH)
-            print("✅ Model loaded successfully with joblib!")
-            
-        except Exception as e1:
-            print(f"⚠️ joblib.load failed: {e1}")
-            print("🔄 Trying alternative loading method...")
-            
-            try:
-                # Method 2: Use pickle directly with different protocols
-                with open(MODEL_PATH, 'rb') as f:
-                    model = pickle.load(f)
-                print("✅ Model loaded successfully with pickle!")
-                
-            except Exception as e2:
-                print(f"⚠️ pickle.load failed: {e2}")
-                print("🔄 Trying with pickle protocol 4...")
-                
-                try:
-                    # Method 3: Force pickle protocol 4
-                    with open(MODEL_PATH, 'rb') as f:
-                        model = pickle.load(f, encoding='latin1')
-                    print("✅ Model loaded successfully with pickle (latin1)!")
-                    
-                except Exception as e3:
-                    error_msg = f"""
-Failed to load model after multiple attempts:
-- joblib error: {str(e1)}
-- pickle error: {str(e2)}
-- pickle latin1 error: {str(e3)}
-
-This usually indicates:
-1. Python version mismatch between training and deployment
-2. Different scikit-learn versions
-3. Corrupted model file
-4. Incompatible pickle protocol
-
-Solutions:
-1. Retrain and save the model in the deployment environment
-2. Use joblib with explicit protocol: joblib.dump(model, 'model.pkl', protocol=4)
-3. Check scikit-learn versions match
-"""
-                    print(f"❌ {error_msg}")
-                    raise Exception(error_msg)
-        
-        # Verify the model has a predict method
         if not hasattr(model, 'predict'):
-            raise Exception("Loaded object doesn't have a 'predict' method - may not be a valid model")
-            
-        print("✅ Model validation successful!")
+            raise Exception("Model doesn't have 'predict' method")
+        
+        return True
         
     except Exception as e:
-        print(f"❌ Critical error loading model: {e}")
-        # Don't raise here - allow the app to start without the model
-        # Predictions will fail gracefully
-        model = None
+        print(f"⚠️ Standard load failed: {e}")
+        
+        try:
+            import pickle
+            with open(MODEL_PATH, 'rb') as f:
+                model = pickle.load(f)
+            print("✅ Model loaded with pickle!")
+            return True
+        except Exception as e2:
+            print(f"❌ All loading methods failed: {e2}")
+            model = None
+            return False
 
-# Load model and data on startup
-try:
-    load_model()
-    reload_data_if_needed()
-except Exception as e:
-    print(f"⚠️ Startup warning: {e}")
-    print("⚠️ App will start but predictions may not work until model is available")
+def reload_data_if_needed():
+    global df, last_modified
+    try:
+        if not os.path.exists(data_path):
+            print(f"❌ Data file not found at: {data_path}")
+            return
+        
+        current_modified = os.path.getmtime(data_path)
+        if last_modified is None or current_modified > last_modified:
+            print(f"📄 Loading data from: {data_path}")
+            df = pd.read_csv(data_path, low_memory=False)
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            last_modified = current_modified
+            print(f"✅ Data loaded! {len(df)} records, {len(df['code'].unique())} stocks")
+    except Exception as e:
+        print(f"❌ Error loading data: {e}")
+        if df is None:
+            raise
+
+# Initialize on startup
+print("\n" + "=" * 70)
+print("🚀 NSE STOCK PREDICTION API - STARTING UP")
+print("=" * 70)
+
+reload_data_if_needed()
+model_loaded = load_model()
+
+print("=" * 70)
+print(f"Status: {'✅ READY' if (df is not None and model_loaded) else '⚠️ DEGRADED'}")
+print(f"Data: {'✅ Loaded' if df is not None else '❌ Not loaded'}")
+print(f"Model: {'✅ Loaded' if model_loaded else '⚠️ Not loaded (predictions disabled)'}")
+print("=" * 70 + "\n")
 
 def fetch_live_stock_data(symbol):
     now = datetime.now()
@@ -234,13 +245,18 @@ def fetch_live_stock_data(symbol):
 
 def get_latest_stock_data(symbol):
     reload_data_if_needed()
+    if df is None:
+        return None, None
+    
     stock_df = df[df['code'] == symbol].sort_values('date', ascending=False)
     if stock_df.empty:
         return None, None
+    
     row = stock_df.iloc[0]
     change_pct = row['changepct']
     if isinstance(change_pct, str):
         change_pct = float(change_pct.replace('%', ''))
+    
     return {
         'symbol': symbol,
         'current_price': float(row['day_price']),
@@ -270,10 +286,10 @@ class PredictRequest(BaseModel):
 def root():
     reload_data_if_needed()
     return {
-        "status": "healthy" if model is not None else "degraded",
+        "status": "healthy" if (model is not None and df is not None) else "degraded",
         "message": "NSE Kenya Stock Prediction API",
         "model_status": "loaded" if model is not None else "not_loaded",
-        "data_mode": "Auto-reloading (updates when CSV changes)",
+        "data_status": "loaded" if df is not None else "not_loaded",
         "total_stocks": len(df['code'].unique()) if df is not None else 0,
         "total_records": len(df) if df is not None else 0,
         "last_data_update": datetime.fromtimestamp(last_modified).strftime('%Y-%m-%d %H:%M:%S') if last_modified else "Unknown"
@@ -281,9 +297,9 @@ def root():
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint for deployment monitoring"""
+    """Health check endpoint"""
     return {
-        "status": "healthy" if model is not None else "degraded",
+        "status": "healthy",
         "model_loaded": model is not None,
         "data_loaded": df is not None,
         "timestamp": datetime.now().isoformat()
@@ -292,6 +308,9 @@ def health_check():
 @app.get("/stocks")
 def get_available_stocks():
     reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not available")
+    
     stocks_info = df.groupby('code').agg({'name': 'first'}).reset_index()
     stocks_list = [{"code": row['code'], "name": row['name']} for _, row in stocks_info.iterrows()]
     return {
@@ -302,14 +321,16 @@ def get_available_stocks():
 
 @app.post("/predict")
 def predict(request: PredictRequest):
-    # Check if model is loaded
     if model is None:
         raise HTTPException(
-            status_code=503, 
-            detail="Model not available. Please check server logs or contact administrator."
+            status_code=503,
+            detail="Model not available. Predictions are currently unavailable."
         )
     
     reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not available")
+    
     symbol = request.symbol.upper()
     stock_data, data_source = get_latest_stock_data(symbol)
     
@@ -359,6 +380,9 @@ def predict(request: PredictRequest):
 @app.get("/top-stocks")
 def get_top_stocks(criteria: str = "gainers", limit: int = 10):
     reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not available")
+    
     latest_data = df.sort_values('date', ascending=False).groupby('code').first().reset_index()
     required_cols = ['day_price', 'ma_5', 'ma_10', 'pct_from_12m_low', 'pct_from_12m_high', 'daily_return', 'daily_volatility']
     latest_data = latest_data.dropna(subset=required_cols)
@@ -371,7 +395,7 @@ def get_top_stocks(criteria: str = "gainers", limit: int = 10):
         result = latest_data.sort_values('volume', ascending=False).head(limit)
     elif criteria == "buy_signals":
         if model is None:
-            raise HTTPException(status_code=503, detail="Model not available for predictions")
+            raise HTTPException(status_code=503, detail="Model not available")
         
         predictions = []
         for _, row in latest_data.iterrows():
@@ -413,6 +437,9 @@ def get_top_stocks(criteria: str = "gainers", limit: int = 10):
 @app.get("/market-overview")
 def get_market_overview():
     reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not available")
+    
     latest_data = df.sort_values('date', ascending=False).groupby('code').first().reset_index()
     total_stocks = len(latest_data)
     gainers = len(latest_data[latest_data['daily_return'] > 0])
@@ -434,6 +461,9 @@ def get_market_overview():
 @app.get("/trends/{symbol}")
 def get_stock_trends(symbol: str, days: int = 30):
     reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not available")
+    
     symbol = symbol.upper()
     stock_df = df[df['code'] == symbol].sort_values('date', ascending=False).head(days)
     
@@ -464,6 +494,9 @@ def get_stock_trends(symbol: str, days: int = 30):
 @app.get("/history/{symbol}")
 def get_history(symbol: str, days: int = 30):
     reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not available")
+    
     symbol = symbol.upper()
     stock_df = df[df['code'] == symbol].sort_values('date', ascending=False).head(days)
     
