@@ -64,24 +64,53 @@ def download_model():
             print(f"⚠️ Failed to load existing model: {e}")
             print("🔄 Re-downloading model...")
     
-    # Download model from HuggingFace
+    # Download model from HuggingFace with proper headers
     print(f"⬇️ Downloading model from HuggingFace...")
     try:
-        response = requests.get(HF_MODEL_URL, timeout=60)
+        # Add headers to ensure we get the raw file, not HTML
+        headers = {
+            'User-Agent': 'Mozilla/5.0',
+            'Accept': 'application/octet-stream'
+        }
+        
+        response = requests.get(HF_MODEL_URL, headers=headers, timeout=120, stream=True)
         response.raise_for_status()
+        
+        # Check if we got HTML instead of binary data
+        content_type = response.headers.get('Content-Type', '')
+        if 'text/html' in content_type:
+            print(f"❌ Received HTML instead of binary file. Content-Type: {content_type}")
+            print(f"💡 Try accessing the URL directly: {HF_MODEL_URL}?download=true")
+            # Try with download parameter
+            response = requests.get(f"{HF_MODEL_URL}?download=true", headers=headers, timeout=120, stream=True)
+            response.raise_for_status()
         
         # Save the model
         with open(MODEL_PATH, 'wb') as f:
-            f.write(response.content)
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
         
         print(f"✅ Model downloaded and saved to: {MODEL_PATH}")
+        print(f"📊 File size: {os.path.getsize(MODEL_PATH) / 1024 / 1024:.2f} MB")
         
         # Load the model
         with open(MODEL_PATH, 'rb') as f:
             model = pickle.load(f)
         
         print(f"✅ Model loaded successfully!")
+        print(f"🔍 Model type: {type(model)}")
         
+    except pickle.UnpicklingError as e:
+        print(f"❌ Failed to unpickle model: {e}")
+        print(f"🔍 File might be corrupted or not a valid pickle file")
+        # Try to read first few bytes to check
+        try:
+            with open(MODEL_PATH, 'rb') as f:
+                first_bytes = f.read(100)
+                print(f"🔍 First bytes: {first_bytes[:50]}")
+        except:
+            pass
+        model = None
     except Exception as e:
         print(f"❌ Failed to download/load model: {e}")
         print(f"⚠️ Predictions will not be available")
