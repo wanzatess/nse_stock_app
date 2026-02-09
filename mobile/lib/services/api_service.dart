@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   // Base URL of your FastAPI backend (replace with your PC's local IP)
-  final String baseUrl = "http://192.168.1.181:8001";
+  final String baseUrl = "https://nse-stock-app.onrender.com";
 
   /// Health check
   Future<bool> checkHealth() async {
