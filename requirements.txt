@@ -6,3 +6,6 @@ joblib
 pydantic
 yfinance
 httpx
+requests
+beautifulsoup4
+lxml
