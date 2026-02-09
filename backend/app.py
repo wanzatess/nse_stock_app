@@ -309,4 +309,193 @@ def root():
 def get_stocks():
     reload_data_if_needed()
     if df is None:
-        raise HTTPException(status_code=503, detail="Data
+        raise HTTPException(status_code=503, detail="Data not available")
+    stocks = df.groupby("code")["name"].first().reset_index().to_dict(orient="records")
+    return {"stocks": stocks, "count": len(stocks)}
+
+
+@app.post("/predict")
+def predict(request: PredictRequest):
+    symbol = request.symbol.upper()
+    stock = get_latest_stock_data(symbol)
+    if not stock:
+        raise HTTPException(status_code=404, detail="Stock not found")
+
+    features = [
+        stock["current_price"],
+        stock["ma_5"],
+        stock["ma_10"],
+        stock["pct_from_12m_low"],
+        stock["pct_from_12m_high"],
+        stock["daily_return"],
+        stock["daily_volatility"]
+    ]
+
+    prediction_result = predict_with_model(features)
+    
+    return {
+        "symbol": symbol,
+        "name": stock["name"],
+        "prediction": prediction_result,
+        **stock
+    }
+
+
+@app.get("/market-overview")
+def get_market_overview():
+    reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not loaded")
+
+    latest_data = df.sort_values("date", ascending=False).groupby("code").first().reset_index()
+    total_stocks = len(latest_data)
+    gainers = len(latest_data[latest_data["daily_return"] > 0])
+    losers = len(latest_data[latest_data["daily_return"] < 0])
+    unchanged = total_stocks - gainers - losers
+    avg_change = latest_data["daily_return"].mean()
+    total_volume = latest_data["volume"].sum()
+
+    return {
+        "total_stocks": total_stocks,
+        "gainers": gainers,
+        "losers": losers,
+        "unchanged": unchanged,
+        "average_change": float(avg_change),
+        "total_volume": int(total_volume),
+        "last_updated": latest_data["date"].max().strftime("%Y-%m-%d")
+    }
+
+
+@app.get("/top-stocks")
+def get_top_stocks(criteria: str = "gainers", limit: int = 10):
+    reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not loaded")
+
+    latest_data = df.sort_values("date", ascending=False).groupby("code").first().reset_index()
+    required_cols = ['day_price', 'ma_5', 'ma_10', 'pct_from_12m_low', 
+                     'pct_from_12m_high', 'daily_return', 'daily_volatility']
+    latest_data = latest_data.dropna(subset=required_cols)
+
+    if criteria == "gainers":
+        result = latest_data.sort_values('daily_return', ascending=False).head(limit)
+    elif criteria == "losers":
+        result = latest_data.sort_values('daily_return', ascending=True).head(limit)
+    elif criteria == "volume":
+        result = latest_data.sort_values('volume', ascending=False).head(limit)
+    elif criteria == "buy_signals":
+        # Get 'buy' signals via model predictions
+        predictions = []
+        for _, row in latest_data.iterrows():
+            features = [
+                row['day_price'], row['ma_5'], row['ma_10'],
+                row['pct_from_12m_low'], row['pct_from_12m_high'],
+                row['daily_return'], row['daily_volatility']
+            ]
+            try:
+                pred = predict_with_model(features)
+                # Adjust this logic based on your model's output
+                # Assuming prediction > 0 means buy signal
+                if pred and pred.get('prediction', 0) > 0:
+                    predictions.append(row)
+            except:
+                continue
+        result = pd.DataFrame(predictions).head(limit) if predictions else pd.DataFrame()
+    else:
+        raise HTTPException(status_code=400, detail="Invalid criteria")
+
+    stocks = []
+    for _, row in result.iterrows():
+        change_pct = row["changepct"]
+        if isinstance(change_pct, str):
+            change_pct = float(change_pct.replace("%", ""))
+        stocks.append({
+            "symbol": row["code"],
+            "name": row["name"],
+            "current_price": float(row["day_price"]),
+            "change": float(row["change"]) if pd.notna(row["change"]) else 0.0,
+            "change_percent": float(change_pct),
+            "volume": int(row["volume"]) if pd.notna(row["volume"]) else 0
+        })
+
+    return {"criteria": criteria, "stocks": stocks, "count": len(stocks)}
+
+
+@app.get("/trends/{symbol}")
+def get_stock_trends(symbol: str, days: int = 30):
+    reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not loaded")
+
+    symbol = symbol.upper()
+    stock_df = df[df['code'] == symbol].sort_values('date', ascending=False).head(days)
+    if stock_df.empty:
+        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+
+    prices = stock_df['day_price'].values
+    if len(prices) > 1:
+        x = np.arange(len(prices))
+        slope = np.polyfit(x, prices, 1)[0]
+        trend = "upward" if slope > 0 else "downward" if slope < 0 else "flat"
+    else:
+        trend = "insufficient_data"
+
+    return {
+        "symbol": symbol,
+        "name": stock_df.iloc[0]['name'],
+        "trend": trend,
+        "period_days": days,
+        "highest_price": float(stock_df['day_high'].max()),
+        "lowest_price": float(stock_df['day_low'].min()),
+        "average_price": float(stock_df['day_price'].mean()),
+        "current_price": float(stock_df.iloc[0]['day_price']),
+        "price_change": float(stock_df.iloc[0]['day_price'] - stock_df.iloc[-1]['day_price']),
+        "average_volume": int(stock_df['volume'].mean()) if not pd.isna(stock_df['volume'].mean()) else 0
+    }
+
+
+@app.get("/history/{symbol}")
+def get_history(symbol: str, days: int = 30):
+    reload_data_if_needed()
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not loaded")
+
+    symbol = symbol.upper()
+    stock_df = df[df['code'] == symbol].sort_values('date', ascending=False).head(days)
+    if stock_df.empty:
+        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+
+    history = []
+    for _, row in stock_df.iterrows():
+        change_pct = row['changepct']
+        if isinstance(change_pct, str):
+            change_pct = float(change_pct.replace('%', ''))
+        history.append({
+            "date": row['date'].strftime('%Y-%m-%d'),
+            "price": float(row['day_price']),
+            "low": float(row['day_low']) if pd.notna(row['day_low']) else float(row['day_price']),
+            "high": float(row['day_high']) if pd.notna(row['day_high']) else float(row['day_price']),
+            "volume": int(row['volume']) if not pd.isna(row['volume']) else 0,
+            "change_percent": float(change_pct) if pd.notna(change_pct) else 0.0
+        })
+
+    return {"symbol": symbol, "name": stock_df.iloc[0]['name'], "data": history}
+
+
+# ------------------------------
+# STARTUP
+# ------------------------------
+@app.on_event("startup")
+async def startup_event():
+    print("\n🚀 NSE STOCK PREDICTION API - STARTING UP")
+    reload_data_if_needed()
+    download_model()
+    print("✅ Startup complete!\n")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    print("\n🚀 NSE STOCK PREDICTION API - STARTING UP")
+    reload_data_if_needed()
+    download_model()
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8001)))
