@@ -36,7 +36,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # goes u
 DATA_PATH = os.path.join(BASE_DIR, "data", "processed", "NSE_20_stocks_2013_2025_features_target.csv")
 
 # HuggingFace Inference API
-HF_MODEL_URL = "https://huggingface.co/wanzatess/nse_stock_model"
+HF_MODEL_URL = "https://api-inference.huggingface.co/models/wanzatess/nse_stock_model"
 HF_API_TOKEN = os.environ.get("HF_API_TOKEN")  # optional if private model
 
 # ------------------------------
@@ -93,21 +93,38 @@ def get_latest_stock_data(symbol: str):
 
 def predict_with_hf(features: list):
     """Call HuggingFace model API for prediction"""
-    headers = {}
+    headers = {"Content-Type": "application/json"}
     if HF_API_TOKEN:
         headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
 
-    payload = {"inputs": features}
+    # HuggingFace Inference API expects inputs as a list (can be nested)
+    payload = {"inputs": [features]}
 
-    response = requests.post(HF_MODEL_URL, json=payload, headers=headers, timeout=15)
-
-    if response.status_code != 200:
+    try:
+        response = requests.post(HF_MODEL_URL, json=payload, headers=headers, timeout=30)
+        
+        # If model is loading (503), wait and retry once
+        if response.status_code == 503:
+            import time
+            time.sleep(5)
+            response = requests.post(HF_MODEL_URL, json=payload, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            # HF returns different formats - handle both
+            if isinstance(result, list) and len(result) > 0:
+                return result[0] if isinstance(result[0], dict) else {"prediction": result[0]}
+            return result
+        else:
+            raise HTTPException(
+                status_code=502,
+                detail=f"HuggingFace API error: {response.status_code} {response.text}"
+            )
+    except requests.exceptions.RequestException as e:
         raise HTTPException(
             status_code=502,
-            detail=f"HuggingFace API error: {response.status_code} {response.text}"
+            detail=f"Failed to connect to HuggingFace API: {str(e)}"
         )
-
-    return response.json()
 
 
 # ------------------------------
