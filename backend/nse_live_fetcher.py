@@ -32,7 +32,7 @@ class NSELiveDataFetcher:
         },
         {
             'name': 'MyStocks',
-            'url': 'http://live.mystocks.co.ke/pricelist',
+            'url': 'https://live.mystocks.co.ke/m/pricelist',
             'parser': 'parse_mystocks'
         }
     ]
