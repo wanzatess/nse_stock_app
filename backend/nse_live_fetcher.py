@@ -1,10 +1,15 @@
 """
-NSE Kenya Live Data Fetcher - Investing.com Version
-Scrapes real-time stock data from investing.com (more reliable for GitHub Actions)
+NSE Kenya Live Data Fetcher - ROBUST VERSION
+Multiple data sources with automatic fallback
+Works reliably on GitHub Actions
+
+Data sources (tried in order):
+1. afx.kwayisi.org (primary)
+2. live.mystocks.co.ke (fallback)
 
 Usage:
-    python nse_live_fetcher_investing.py          # Test mode
-    python nse_live_fetcher_investing.py --update # Update database
+    python nse_live_fetcher_robust.py          # Test mode
+    python nse_live_fetcher_robust.py --update # Update database
 """
 
 import requests
@@ -14,145 +19,231 @@ from datetime import datetime
 import argparse
 import sys
 import time
-import json
+from io import StringIO
 
 class NSELiveDataFetcher:
-    """Fetch live NSE data from Investing.com"""
+    """Fetch live NSE data with multiple source fallback"""
     
-    BASE_URL = "https://www.investing.com/equities/kenya"
+    SOURCES = [
+        {
+            'name': 'AFX',
+            'url': 'https://afx.kwayisi.org/nse/',
+            'parser': 'parse_afx'
+        },
+        {
+            'name': 'MyStocks',
+            'url': 'http://live.mystocks.co.ke/pricelist',
+            'parser': 'parse_mystocks'
+        }
+    ]
     
     def __init__(self):
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
         }
+    
+    def parse_afx(self, html):
+        """Parse AFX page"""
+        soup = BeautifulSoup(html, 'html.parser')
+        tables = pd.read_html(StringIO(html))
+        
+        # Find stocks table (largest table)
+        stocks_table = None
+        max_rows = 0
+        
+        for table in tables:
+            if len(table) > max_rows and len(table) > 5:
+                cols_str = ' '.join([str(c).lower() for c in table.columns])
+                if any(kw in cols_str for kw in ['symbol', 'company', 'price', 'stock']):
+                    stocks_table = table
+                    max_rows = len(table)
+        
+        if stocks_table is None and len(tables) > 1:
+            stocks_table = tables[1]
+        
+        if stocks_table is None:
+            return None
+        
+        df = stocks_table.copy()
+        df.columns = df.columns.str.strip()
+        
+        # Map columns
+        column_mapping = {}
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if 'symbol' in col_lower or 'code' in col_lower or 'ticker' in col_lower:
+                column_mapping[col] = 'code'
+            elif 'company' in col_lower or 'name' in col_lower:
+                column_mapping[col] = 'name'
+            elif 'price' in col_lower or 'close' in col_lower:
+                column_mapping[col] = 'day_price'
+            elif 'change' in col_lower and '%' not in col_lower:
+                column_mapping[col] = 'change'
+            elif '%' in col_lower or 'percent' in col_lower:
+                column_mapping[col] = 'changepct'
+            elif 'volume' in col_lower or 'vol' in col_lower:
+                column_mapping[col] = 'volume'
+            elif 'high' in col_lower:
+                column_mapping[col] = 'day_high'
+            elif 'low' in col_lower:
+                column_mapping[col] = 'day_low'
+        
+        df.rename(columns=column_mapping, inplace=True)
+        
+        # Must have code and price
+        if 'code' not in df.columns or 'day_price' not in df.columns:
+            return None
+        
+        return df
+    
+    def parse_mystocks(self, html):
+        """Parse MyStocks page"""
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Find the price table
+        table = soup.find('table', class_='pricelist') or soup.find('table', {'id': 'pricelist'})
+        
+        if not table:
+            # Try any large table
+            tables = soup.find_all('table')
+            for t in tables:
+                if len(t.find_all('tr')) > 10:
+                    table = t
+                    break
+        
+        if not table:
+            return None
+        
+        # Extract data
+        stocks_data = []
+        rows = table.find_all('tr')[1:]  # Skip header
+        
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) < 3:
+                continue
+            
+            try:
+                # Typical MyStocks format: Code | Name | Price | Change | %Change | Volume
+                code = cols[0].text.strip()
+                name = cols[1].text.strip() if len(cols) > 1 else code
+                price = cols[2].text.strip().replace(',', '') if len(cols) > 2 else '0'
+                change = cols[3].text.strip().replace(',', '') if len(cols) > 3 else '0'
+                changepct = cols[4].text.strip().replace('%', '').replace(',', '') if len(cols) > 4 else '0'
+                volume = cols[5].text.strip().replace(',', '') if len(cols) > 5 else '0'
+                
+                stocks_data.append({
+                    'code': code,
+                    'name': name,
+                    'day_price': price,
+                    'change': change,
+                    'changepct': changepct,
+                    'volume': volume
+                })
+            except:
+                continue
+        
+        if not stocks_data:
+            return None
+        
+        return pd.DataFrame(stocks_data)
     
     def fetch_all_stocks(self, max_retries=3):
         """
-        Fetch all NSE stocks from Investing.com
+        Fetch NSE stocks trying multiple sources with fallback
         
         Returns:
-            pandas DataFrame with columns: code, name, day_price, change, changepct, volume, etc.
+            pandas DataFrame with stock data
         """
-        for attempt in range(max_retries):
-            try:
-                print(f"📡 Fetching live NSE data from Investing.com (attempt {attempt+1}/{max_retries})...")
-                
-                response = requests.get(self.BASE_URL, headers=self.headers, timeout=30)
-                response.raise_for_status()
-                
-                # Parse HTML
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                # Find the stocks table
-                # Investing.com uses a table with class containing 'genTbl' or similar
-                table = soup.find('table', {'id': 'cr1'}) or soup.find('table', class_=lambda x: x and 'genTbl' in x)
-                
-                if not table:
-                    print("⚠️  Could not find stocks table, trying alternative method...")
-                    # Try to find any table with stock data
-                    tables = soup.find_all('table')
-                    for t in tables:
-                        if len(t.find_all('tr')) > 10:  # Should have many rows
-                            table = t
-                            break
-                
-                if not table:
-                    raise Exception("Could not find stocks table on page")
-                
-                # Extract data
-                stocks_data = []
-                rows = table.find_all('tr')[1:]  # Skip header
-                
-                for row in rows:
-                    cols = row.find_all('td')
-                    if len(cols) < 5:
-                        continue
+        for source in self.SOURCES:
+            print(f"\n📡 Trying {source['name']}...")
+            
+            for attempt in range(max_retries):
+                try:
+                    print(f"   Attempt {attempt+1}/{max_retries}...")
                     
-                    try:
-                        # Extract stock name and code
-                        name_cell = cols[0]
-                        name_link = name_cell.find('a')
-                        if name_link:
-                            full_name = name_link.text.strip()
-                            # Try to extract code from link or name
-                            link_href = name_link.get('href', '')
-                            code = link_href.split('/')[-1].upper() if link_href else full_name.split()[0]
-                        else:
-                            full_name = name_cell.text.strip()
-                            code = full_name.split()[0]
-                        
-                        # Extract price and changes
-                        price = cols[1].text.strip().replace(',', '')
-                        change = cols[2].text.strip().replace(',', '')
-                        changepct = cols[3].text.strip().replace('%', '').replace(',', '')
-                        
-                        # Volume (if available)
-                        volume = cols[4].text.strip().replace(',', '') if len(cols) > 4 else '0'
-                        
-                        stocks_data.append({
-                            'code': code,
-                            'name': full_name,
-                            'day_price': price,
-                            'change': change,
-                            'changepct': changepct,
-                            'volume': volume
-                        })
+                    response = requests.get(
+                        source['url'], 
+                        headers=self.headers, 
+                        timeout=30,
+                        allow_redirects=True
+                    )
+                    response.raise_for_status()
                     
-                    except Exception as e:
-                        print(f"  ⚠️  Error parsing row: {e}")
-                        continue
+                    # Parse using appropriate parser
+                    parser_method = getattr(self, source['parser'])
+                    df = parser_method(response.text)
+                    
+                    if df is None or len(df) == 0:
+                        raise Exception("No data extracted")
+                    
+                    # Clean data
+                    df = self.clean_data(df)
+                    
+                    if len(df) > 0:
+                        print(f"✅ Successfully fetched {len(df)} stocks from {source['name']}")
+                        return df
+                    
+                except requests.exceptions.Timeout:
+                    print(f"   ⏱️  Timeout")
+                except requests.exceptions.RequestException as e:
+                    print(f"   ❌ Request error: {str(e)[:100]}")
+                except Exception as e:
+                    print(f"   ❌ Parsing error: {str(e)[:100]}")
                 
-                if not stocks_data:
-                    raise Exception("No stock data extracted from table")
-                
-                # Create DataFrame
-                df = pd.DataFrame(stocks_data)
-                
-                # Clean and convert data types
-                df['day_price'] = pd.to_numeric(df['day_price'], errors='coerce')
-                df['change'] = pd.to_numeric(df['change'], errors='coerce')
-                df['changepct'] = pd.to_numeric(df['changepct'], errors='coerce')
-                df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
-                
-                # Calculate previous price
-                df['previous'] = df['day_price'] - df['change']
-                
-                # Add date
-                df['date'] = datetime.now().strftime('%Y-%m-%d')
-                
-                # Add day high/low (use current price as estimate)
-                df['day_high'] = df['day_price']
-                df['day_low'] = df['day_price']
-                
-                # Drop rows with invalid data
-                df = df[df['day_price'].notna()]
-                df = df[df['day_price'] > 0]
-                
-                print(f"✅ Fetched data for {len(df)} stocks")
-                print(f"Columns: {df.columns.tolist()}")
-                
-                return df
-                
-            except Exception as e:
-                print(f"❌ Attempt {attempt+1} failed: {e}")
                 if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 10
-                    print(f"⏳ Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
-                else:
-                    print("❌ All retry attempts failed")
-                    import traceback
-                    traceback.print_exc()
-                    return None
+                    wait = (attempt + 1) * 5
+                    print(f"   ⏳ Waiting {wait}s...")
+                    time.sleep(wait)
+            
+            print(f"   ✗ {source['name']} failed after {max_retries} attempts")
         
+        print("\n❌ All data sources failed")
         return None
+    
+    def clean_data(self, df):
+        """Clean and standardize the data"""
+        # Add date
+        df['date'] = datetime.now().strftime('%Y-%m-%d')
+        
+        # Remove summary rows
+        if 'code' in df.columns:
+            df = df[df['code'].notna()]
+            df = df[~df['code'].astype(str).str.lower().str.contains('total|index|market', na=False)]
+        
+        # Convert to numeric
+        if 'day_price' in df.columns:
+            df['day_price'] = pd.to_numeric(df['day_price'], errors='coerce')
+        
+        if 'change' in df.columns:
+            df['change'] = pd.to_numeric(df['change'], errors='coerce')
+            if 'day_price' in df.columns:
+                df['previous'] = df['day_price'] - df['change']
+        
+        if 'changepct' in df.columns:
+            df['changepct'] = df['changepct'].astype(str).str.replace('%', '').str.strip()
+            df['changepct'] = pd.to_numeric(df['changepct'], errors='coerce')
+        
+        if 'volume' in df.columns:
+            df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
+        
+        # Drop invalid rows
+        df = df[df['day_price'].notna()]
+        df = df[df['day_price'] > 0]
+        
+        # Add day_high and day_low if missing
+        if 'day_high' not in df.columns:
+            df['day_high'] = df['day_price']
+        if 'day_low' not in df.columns:
+            df['day_low'] = df['day_price']
+        
+        return df
 
 
 def calculate_technical_indicators(df, historical_df=None):
-    """Calculate technical indicators (same as before)"""
+    """Calculate technical indicators"""
     print("📊 Calculating technical indicators...")
     
     df = df.copy()
@@ -242,7 +333,7 @@ def update_database(new_data, db_path="data/processed/NSE_20_stocks_2013_2025_fe
 
 def main():
     """Main function"""
-    parser = argparse.ArgumentParser(description='Fetch live NSE data from Investing.com')
+    parser = argparse.ArgumentParser(description='Fetch live NSE data with automatic fallback')
     parser.add_argument('--update', action='store_true', help='Update database with live data')
     parser.add_argument('--db-path', default='data/processed/NSE_20_stocks_2013_2025_features_target.csv',
                        help='Path to database CSV file')
@@ -253,7 +344,7 @@ def main():
     live_data = fetcher.fetch_all_stocks()
     
     if live_data is None or len(live_data) == 0:
-        print("❌ Failed to fetch data or no stocks found")
+        print("❌ Failed to fetch data from all sources")
         sys.exit(1)
     
     print("\n📋 Sample of fetched data:")
