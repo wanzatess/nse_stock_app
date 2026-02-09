@@ -31,7 +31,7 @@ data_path = "../data/processed/NSE_20_stocks_2013_2025_features_target.csv"
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 os.makedirs(MODEL_DIR, exist_ok=True)
 MODEL_PATH = os.path.join(MODEL_DIR, "stock_model.pkl")
-MODEL_URL = "https://drive.google.com/uc?export=download&id=1ci2To3xGxrt9cZzY3mlnWEl-RsCFEPEA"
+MODEL_URL = "https://drive.google.com/uc?id=1ewS_wYEWWxiJKu7JNeanXIsJwbR4ggt1"
 
 # Cache for live data (15 minute cache)
 live_data_cache = {}
