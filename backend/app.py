@@ -6,6 +6,8 @@ import numpy as np
 import os
 from datetime import datetime
 import requests
+import pickle
+import joblib
 
 # ------------------------------
 # FASTAPI APP
@@ -28,29 +30,73 @@ app.add_middleware(
 # ------------------------------
 df = None
 last_modified = None
+model = None
 
 # ------------------------------
 # PATHS
 # ------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # goes up one level from backend/
 DATA_PATH = os.path.join(BASE_DIR, "data", "processed", "NSE_20_stocks_2013_2025_features_target.csv")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "stock_model_compressed.pkl")
 
-# HuggingFace Inference API
-HF_MODEL_URL = "https://api-inference.huggingface.co/models/wanzatess/nse_stock_model"
-HF_API_TOKEN = os.environ.get("HF_API_TOKEN")  # optional if private model
+# HuggingFace Model URL
+HF_MODEL_URL = "https://huggingface.co/wanzatess/nse_stock_model/resolve/main/stock_model_compressed.pkl"
 
 # ------------------------------
 # HELPER FUNCTIONS
 # ------------------------------
+def download_model():
+    """Download the model from HuggingFace if not present"""
+    global model
+    
+    # Create models directory if it doesn't exist
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    
+    # Check if model already exists
+    if os.path.exists(MODEL_PATH):
+        print(f"📦 Loading existing model from: {MODEL_PATH}")
+        try:
+            with open(MODEL_PATH, 'rb') as f:
+                model = pickle.load(f)
+            print(f"✅ Model loaded successfully!")
+            return
+        except Exception as e:
+            print(f"⚠️ Failed to load existing model: {e}")
+            print("🔄 Re-downloading model...")
+    
+    # Download model from HuggingFace
+    print(f"⬇️ Downloading model from HuggingFace...")
+    try:
+        response = requests.get(HF_MODEL_URL, timeout=60)
+        response.raise_for_status()
+        
+        # Save the model
+        with open(MODEL_PATH, 'wb') as f:
+            f.write(response.content)
+        
+        print(f"✅ Model downloaded and saved to: {MODEL_PATH}")
+        
+        # Load the model
+        with open(MODEL_PATH, 'rb') as f:
+            model = pickle.load(f)
+        
+        print(f"✅ Model loaded successfully!")
+        
+    except Exception as e:
+        print(f"❌ Failed to download/load model: {e}")
+        print(f"⚠️ Predictions will not be available")
+        model = None
+
+
 def reload_data_if_needed():
     global df, last_modified
     if not os.path.exists(DATA_PATH):
-        print(f"❌ Data file not found: {DATA_PATH}")
+        print(f"⚠️ Data file not found: {DATA_PATH}")
         return
 
     current_modified = os.path.getmtime(DATA_PATH)
     if last_modified is None or current_modified > last_modified:
-        print(f"📄 Loading data from: {DATA_PATH}")
+        print(f"🔄 Loading data from: {DATA_PATH}")
         df = pd.read_csv(DATA_PATH, low_memory=False)
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         last_modified = current_modified
@@ -91,39 +137,41 @@ def get_latest_stock_data(symbol: str):
     }
 
 
-def predict_with_hf(features: list):
-    """Call HuggingFace model API for prediction"""
-    headers = {"Content-Type": "application/json"}
-    if HF_API_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
-
-    # HuggingFace Inference API expects inputs as a list (can be nested)
-    payload = {"inputs": [features]}
-
-    try:
-        response = requests.post(HF_MODEL_URL, json=payload, headers=headers, timeout=30)
-        
-        # If model is loading (503), wait and retry once
-        if response.status_code == 503:
-            import time
-            time.sleep(5)
-            response = requests.post(HF_MODEL_URL, json=payload, headers=headers, timeout=30)
-        
-        if response.status_code == 200:
-            result = response.json()
-            # HF returns different formats - handle both
-            if isinstance(result, list) and len(result) > 0:
-                return result[0] if isinstance(result[0], dict) else {"prediction": result[0]}
-            return result
-        else:
-            raise HTTPException(
-                status_code=502,
-                detail=f"HuggingFace API error: {response.status_code} {response.text}"
-            )
-    except requests.exceptions.RequestException as e:
+def predict_with_model(features: list):
+    """Make prediction using the loaded model"""
+    if model is None:
         raise HTTPException(
-            status_code=502,
-            detail=f"Failed to connect to HuggingFace API: {str(e)}"
+            status_code=503,
+            detail="Model not available. Please try again later."
+        )
+    
+    try:
+        # Convert features to numpy array with shape (1, n_features)
+        features_array = np.array(features).reshape(1, -1)
+        
+        # Make prediction
+        prediction = model.predict(features_array)
+        
+        # Get prediction probabilities if available
+        if hasattr(model, 'predict_proba'):
+            probabilities = model.predict_proba(features_array)
+            
+            # Assuming binary or multi-class classification
+            # Adjust based on your model's output
+            return {
+                "prediction": int(prediction[0]),
+                "confidence": float(max(probabilities[0])),
+                "probabilities": probabilities[0].tolist()
+            }
+        else:
+            return {
+                "prediction": float(prediction[0])
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prediction error: {str(e)}"
         )
 
 
@@ -142,6 +190,7 @@ def root():
     return {
         "status": "healthy" if df is not None else "degraded",
         "data_loaded": df is not None,
+        "model_loaded": model is not None,
         "total_stocks": df["code"].nunique() if df is not None else 0,
     }
 
@@ -172,11 +221,12 @@ def predict(request: PredictRequest):
         stock["daily_volatility"]
     ]
 
-    hf_result = predict_with_hf(features)
+    prediction_result = predict_with_model(features)
+    
     return {
         "symbol": symbol,
         "name": stock["name"],
-        "prediction": hf_result,
+        "prediction": prediction_result,
         **stock
     }
 
@@ -224,7 +274,7 @@ def get_top_stocks(criteria: str = "gainers", limit: int = 10):
     elif criteria == "volume":
         result = latest_data.sort_values('volume', ascending=False).head(limit)
     elif criteria == "buy_signals":
-        # get 'buy' signals via HF predictions
+        # Get 'buy' signals via model predictions
         predictions = []
         for _, row in latest_data.iterrows():
             features = [
@@ -233,8 +283,10 @@ def get_top_stocks(criteria: str = "gainers", limit: int = 10):
                 row['daily_return'], row['daily_volatility']
             ]
             try:
-                pred = predict_with_hf(features)
-                if pred and isinstance(pred, list) and 'buy' in str(pred).lower():
+                pred = predict_with_model(features)
+                # Adjust this logic based on your model's output
+                # Assuming prediction > 0 means buy signal
+                if pred and pred.get('prediction', 0) > 0:
                     predictions.append(row)
             except:
                 continue
@@ -323,8 +375,17 @@ def get_history(symbol: str, days: int = 30):
 # ------------------------------
 # STARTUP
 # ------------------------------
+@app.on_event("startup")
+async def startup_event():
+    print("\n🚀 NSE STOCK PREDICTION API - STARTING UP")
+    reload_data_if_needed()
+    download_model()
+    print("✅ Startup complete!\n")
+
+
 if __name__ == "__main__":
     import uvicorn
     print("\n🚀 NSE STOCK PREDICTION API - STARTING UP")
     reload_data_if_needed()
+    download_model()
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8001)))
