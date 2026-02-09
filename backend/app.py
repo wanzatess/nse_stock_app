@@ -61,7 +61,18 @@ def load_pickle_file(filepath):
     # Gzip files start with 0x1f 0x8b
     is_gzipped = (first_bytes[:2] == b'\x1f\x8b')
     
-    # Try gzip first
+    # Prefer joblib.load first (handles common compressed formats like zlib)
+    # Use mmap_mode='r' to memory-map large numpy arrays where possible so we
+    # avoid loading the full model into RAM at once on low-memory hosts.
+    print(f"🔧 Trying joblib.load (with mmap_mode='r')...")
+    try:
+        loaded_model = joblib.load(filepath, mmap_mode='r')
+        print(f"✅ Loaded with joblib.load (mmap)")
+        return loaded_model
+    except Exception as e:
+        print(f"⚠️ joblib (mmap) failed: {e}")
+
+    # Try gzip (gzip wrapper + pickle)
     if is_gzipped:
         print(f"🗜️ Detected gzip-compressed file")
         try:
@@ -71,16 +82,7 @@ def load_pickle_file(filepath):
             return loaded_model
         except Exception as e:
             print(f"⚠️ gzip+pickle failed: {e}")
-    
-    # Try joblib (handles compression automatically)
-    print(f"🔧 Trying joblib.load...")
-    try:
-        loaded_model = joblib.load(filepath)
-        print(f"✅ Loaded with joblib.load")
-        return loaded_model
-    except Exception as e:
-        print(f"⚠️ joblib failed: {e}")
-    
+
     # Try regular pickle
     print(f"📦 Trying regular pickle...")
     try:
@@ -165,7 +167,7 @@ def download_model():
             first_bytes = f.read(10)
             print(f"🔍 File signature: {first_bytes[:4].hex()}")
         
-        # Load the model using intelligent loader
+        # Load the model using intelligent loader (with mmap if available)
         model = load_pickle_file(MODEL_PATH)
         print(f"✅ Model loaded successfully!")
         print(f"🔍 Model type: {type(model)}")
@@ -250,6 +252,10 @@ def get_latest_stock_data(symbol: str):
 
 def predict_with_model(features: list):
     """Make prediction using the loaded model"""
+    # Ensure model is available; attempt to download/load on demand to avoid
+    # keeping the model in memory at startup on constrained hosts.
+    if model is None:
+        download_model()
     if model is None:
         raise HTTPException(
             status_code=503,
@@ -259,25 +265,40 @@ def predict_with_model(features: list):
     try:
         # Convert features to numpy array with shape (1, n_features)
         features_array = np.array(features).reshape(1, -1)
-        
+
         # Make prediction
         prediction = model.predict(features_array)
-        
+
+        # Normalize prediction value for JSON transport
+        raw_pred = prediction[0]
+
         # Get prediction probabilities if available
         if hasattr(model, 'predict_proba'):
             probabilities = model.predict_proba(features_array)
-            
-            # Assuming binary or multi-class classification
-            # Adjust based on your model's output
+            conf = float(max(probabilities[0]))
+            # Attempt to return numeric prediction when possible, otherwise string label
+            try:
+                pred_value = int(raw_pred)
+            except Exception:
+                try:
+                    pred_value = float(raw_pred)
+                except Exception:
+                    pred_value = str(raw_pred)
+
             return {
-                "prediction": int(prediction[0]),
-                "confidence": float(max(probabilities[0])),
+                "prediction": pred_value,
+                "confidence": conf,
                 "probabilities": probabilities[0].tolist()
             }
         else:
-            # For regression or models without predict_proba
+            # For regression or models without predict_proba, return raw numeric prediction if possible
+            try:
+                pred_value = float(raw_pred)
+            except Exception:
+                pred_value = str(raw_pred)
+
             return {
-                "prediction": float(prediction[0]),
+                "prediction": pred_value,
                 "confidence": None,
                 "probabilities": None
             }
@@ -487,10 +508,11 @@ def get_history(symbol: str, days: int = 30):
 # ------------------------------
 @app.on_event("startup")
 async def startup_event():
+    # Do not force model download at startup on low-memory hosts (e.g. Render free tier).
+    # Instead load data only and defer model download until the first prediction request.
     print("\n🚀 NSE STOCK PREDICTION API - STARTING UP")
     reload_data_if_needed()
-    download_model()
-    print("✅ Startup complete!\n")
+    print("✅ Data loaded; model will be loaded on first prediction if needed.\n")
 
 
 if __name__ == "__main__":

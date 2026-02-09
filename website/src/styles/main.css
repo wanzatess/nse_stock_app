@@ -1,0 +1,140 @@
+body {
+  margin: 0;
+  font-family: system-ui, Arial, sans-serif;
+  background: #f4f6f8;
+  color: #222;
+}
+
+.navbar {
+  background: #1b5e20;
+  color: white;
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.navbar a {
+  color: #c8e6c9;
+  margin-left: 16px;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.navbar a.active {
+  color: white;
+  text-decoration: underline;
+}
+
+.page {
+  padding: 24px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 4px rgba(0,0,0,.08);
+}
+
+.card-title {
+  font-size: 13px;
+  color: #666;
+}
+
+.card-value {
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.muted {
+  margin-top: 16px;
+  color: #777;
+}
+
+.tabs {
+  margin-bottom: 16px;
+}
+
+.tab {
+  margin-right: 8px;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  background: white;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.tab.active {
+  background: #1b5e20;
+  color: white;
+  border-color: #1b5e20;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+.table th,
+.table td {
+  padding: 10px;
+  border-bottom: 1px solid #ddd;
+}
+
+.pos {
+  color: green;
+  font-weight: 600;
+}
+
+.neg {
+  color: red;
+  font-weight: 600;
+}
+
+.loading {
+  padding: 20px;
+}
+
+/* Bottom Navigation (NavigationBar-like) */
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: 8px 12px;
+  background: #0f0f0f;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  color: #9e9e9e;
+  cursor: pointer;
+}
+
+.nav-item.active {
+  color: #ffffff;
+}
+
+.nav-icon { font-size: 20px; }
+.nav-label { font-size: 12px; }
+
+/* On small screens ensure content above nav is visible */
+.content-area { padding-bottom: 72px; }

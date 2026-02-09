@@ -54,7 +54,8 @@ def main():
         print(f"ERROR: Fetcher not found at {FETCHER_PATH}")
         sys.exit(1)
     
-    if not run_command(f'python "{FETCHER_PATH}" --update'):
+    # Use UTF-8 mode and pass absolute CSV path so the fetcher updates the right file
+    if not run_command(f'python -X utf8 "{FETCHER_PATH}" --update --db-path "{CSV_PATH}"'):
         print("\nData fetch failed! Check your internet connection or fetcher")
         sys.exit(1)
 
