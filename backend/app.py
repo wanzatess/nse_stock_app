@@ -387,6 +387,49 @@ def get_market_overview():
     }
 
 
+@app.get("/health")
+def health():
+    """Basic health endpoint for readiness checks"""
+    reload_data_if_needed()
+    return {
+        "status": "ok" if df is not None else "degraded",
+        "data_loaded": df is not None,
+        "model_loaded": model is not None,
+        "total_stocks": int(df["code"].nunique()) if df is not None else 0,
+    }
+
+
+@app.get("/model-status")
+def model_status():
+    """Detailed model status and ability to trigger load"""
+    status = {
+        "model_loaded": model is not None,
+        "model_path": MODEL_PATH,
+    }
+    if model is None:
+        status["hint"] = "Model not loaded. POST to /model-load to attempt loading now."
+    else:
+        try:
+            status["model_type"] = str(type(model))
+        except Exception:
+            status["model_type"] = "unknown"
+    return status
+
+
+@app.post("/model-load")
+def model_load():
+    """Trigger model download/load on demand (useful for deploy hooks)"""
+    if model is not None:
+        return {"ok": True, "message": "Model already loaded"}
+    try:
+        download_model()
+        if model is None:
+            raise Exception("Model failed to load")
+        return {"ok": True, "message": "Model loaded successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Model load failed: {e}")
+
+
 @app.get("/top-stocks")
 def get_top_stocks(criteria: str = "gainers", limit: int = 10):
     reload_data_if_needed()

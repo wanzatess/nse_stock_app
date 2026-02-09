@@ -1,0 +1,15 @@
+# Render service configuration for monorepo: static frontend + Python backend
+
+services:
+  - type: web_service
+    name: nse-stock-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT --proxy-headers
+
+static_sites:
+  - type: static_site
+    name: nse-stock-website
+    buildCommand: cd website && npm install && npm run build
+    publishPath: website/build
