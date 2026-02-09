@@ -30,7 +30,7 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return List<Map<String, dynamic>>.from(data['stocks_with_names']);
+        return List<Map<String, dynamic>>.from(data['stocks']);
       } else {
         throw Exception('Failed to fetch stocks: ${response.statusCode}');
       }
