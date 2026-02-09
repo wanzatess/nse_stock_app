@@ -56,10 +56,19 @@ def download_model():
     if os.path.exists(MODEL_PATH):
         print(f"📦 Loading existing model from: {MODEL_PATH}")
         try:
-            with open(MODEL_PATH, 'rb') as f:
-                model = pickle.load(f)
-            print(f"✅ Model loaded successfully!")
-            return
+            import gzip
+            # Try gzip-compressed pickle first
+            try:
+                with gzip.open(MODEL_PATH, 'rb') as f:
+                    model = pickle.load(f)
+                print(f"✅ Model loaded successfully (gzip-compressed)!")
+                return
+            except:
+                # Fall back to regular pickle
+                with open(MODEL_PATH, 'rb') as f:
+                    model = pickle.load(f)
+                print(f"✅ Model loaded successfully!")
+                return
         except Exception as e:
             print(f"⚠️ Failed to load existing model: {e}")
             print("🔄 Re-downloading model...")
@@ -67,6 +76,8 @@ def download_model():
     # Download model from HuggingFace with proper headers
     print(f"⬇️ Downloading model from HuggingFace...")
     try:
+        import gzip
+        
         # Add headers to ensure we get the raw file, not HTML
         headers = {
             'User-Agent': 'Mozilla/5.0',
@@ -93,11 +104,17 @@ def download_model():
         print(f"✅ Model downloaded and saved to: {MODEL_PATH}")
         print(f"📊 File size: {os.path.getsize(MODEL_PATH) / 1024 / 1024:.2f} MB")
         
-        # Load the model
-        with open(MODEL_PATH, 'rb') as f:
-            model = pickle.load(f)
+        # Load the model - try gzip first
+        try:
+            with gzip.open(MODEL_PATH, 'rb') as f:
+                model = pickle.load(f)
+            print(f"✅ Model loaded successfully (gzip-compressed)!")
+        except:
+            # Fall back to regular pickle
+            with open(MODEL_PATH, 'rb') as f:
+                model = pickle.load(f)
+            print(f"✅ Model loaded successfully!")
         
-        print(f"✅ Model loaded successfully!")
         print(f"🔍 Model type: {type(model)}")
         
     except pickle.UnpicklingError as e:
