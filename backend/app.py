@@ -46,6 +46,23 @@ HF_MODEL_URL = "https://huggingface.co/wanzatess/nse_stock_model/resolve/main/st
 # ------------------------------
 # HELPER FUNCTIONS
 # ------------------------------
+def sanitize_float(value, default=0.0):
+    """
+    Convert value to float and handle NaN, inf, -inf
+    Returns default value if conversion fails or value is not JSON-compliant
+    """
+    try:
+        if pd.isna(value):
+            return default
+        float_val = float(value)
+        # Check if value is infinity or too large for JSON
+        if not np.isfinite(float_val):
+            return default
+        return float_val
+    except (ValueError, TypeError, OverflowError):
+        return default
+
+
 def load_pickle_file(filepath):
     """
     Intelligently load a pickle file, trying multiple methods
@@ -231,19 +248,19 @@ def get_latest_stock_data(symbol: str):
     return {
         "symbol": symbol,
         "name": row["name"],
-        "current_price": float(row["day_price"]),
-        "previous_price": float(row["previous"]) if pd.notna(row["previous"]) else float(row["day_price"]),
-        "change": float(row["change"]) if pd.notna(row["change"]) else 0.0,
-        "change_percent": float(change_pct) if pd.notna(change_pct) else 0.0,
-        "day_low": float(row["day_low"]) if pd.notna(row["day_low"]) else float(row["day_price"]),
-        "day_high": float(row["day_high"]) if pd.notna(row["day_high"]) else float(row["day_price"]),
-        "volume": int(row["volume"]) if pd.notna(row["volume"]) else 0,
-        "ma_5": float(row["ma_5"]) if pd.notna(row["ma_5"]) else float(row["day_price"]),
-        "ma_10": float(row["ma_10"]) if pd.notna(row["ma_10"]) else float(row["day_price"]),
-        "pct_from_12m_low": float(row["pct_from_12m_low"]) if pd.notna(row["pct_from_12m_low"]) else 0.0,
-        "pct_from_12m_high": float(row["pct_from_12m_high"]) if pd.notna(row["pct_from_12m_high"]) else 0.0,
-        "daily_return": float(row["daily_return"]) if pd.notna(row["daily_return"]) else 0.0,
-        "daily_volatility": float(row["daily_volatility"]) if pd.notna(row["daily_volatility"]) else 0.0,
+        "current_price": sanitize_float(row["day_price"], 0.0),
+        "previous_price": sanitize_float(row["previous"], sanitize_float(row["day_price"], 0.0)),
+        "change": sanitize_float(row["change"], 0.0),
+        "change_percent": sanitize_float(change_pct, 0.0),
+        "day_low": sanitize_float(row["day_low"], sanitize_float(row["day_price"], 0.0)),
+        "day_high": sanitize_float(row["day_high"], sanitize_float(row["day_price"], 0.0)),
+        "volume": int(row["volume"]) if pd.notna(row["volume"]) and np.isfinite(row["volume"]) else 0,
+        "ma_5": sanitize_float(row["ma_5"], sanitize_float(row["day_price"], 0.0)),
+        "ma_10": sanitize_float(row["ma_10"], sanitize_float(row["day_price"], 0.0)),
+        "pct_from_12m_low": sanitize_float(row["pct_from_12m_low"], 0.0),
+        "pct_from_12m_high": sanitize_float(row["pct_from_12m_high"], 0.0),
+        "daily_return": sanitize_float(row["daily_return"], 0.0),
+        "daily_volatility": sanitize_float(row["daily_volatility"], 0.0),
         "last_updated": row["date"].strftime("%Y-%m-%d"),
     }
 
@@ -390,8 +407,8 @@ def get_market_overview():
         "gainers": gainers,
         "losers": losers,
         "unchanged": unchanged,
-        "average_change": float(avg_change),
-        "total_volume": int(total_volume),
+        "average_change": sanitize_float(avg_change, 0.0),
+        "total_volume": int(total_volume) if np.isfinite(total_volume) else 0,
         "last_updated": latest_data["date"].max().strftime("%Y-%m-%d")
     }
 
@@ -501,14 +518,18 @@ def get_top_stocks(criteria: str = "gainers", limit: int = 10):
     for _, row in result.iterrows():
         change_pct = row["changepct"]
         if isinstance(change_pct, str):
-            change_pct = float(change_pct.replace("%", ""))
+            try:
+                change_pct = float(change_pct.replace("%", ""))
+            except:
+                change_pct = 0.0
+        
         stocks.append({
             "symbol": row["code"],
             "name": row["name"],
-            "current_price": float(row["day_price"]),
-            "change": float(row["change"]) if pd.notna(row["change"]) else 0.0,
-            "change_percent": float(change_pct),
-            "volume": int(row["volume"]) if pd.notna(row["volume"]) else 0
+            "current_price": sanitize_float(row["day_price"], 0.0),
+            "change": sanitize_float(row["change"], 0.0),
+            "change_percent": sanitize_float(change_pct, 0.0),
+            "volume": int(row["volume"]) if pd.notna(row["volume"]) and np.isfinite(row["volume"]) else 0
         })
 
     return {"criteria": criteria, "stocks": stocks, "count": len(stocks)}
@@ -538,12 +559,12 @@ def get_stock_trends(symbol: str, days: int = 30):
         "name": stock_df.iloc[0]['name'],
         "trend": trend,
         "period_days": days,
-        "highest_price": float(stock_df['day_high'].max()),
-        "lowest_price": float(stock_df['day_low'].min()),
-        "average_price": float(stock_df['day_price'].mean()),
-        "current_price": float(stock_df.iloc[0]['day_price']),
-        "price_change": float(stock_df.iloc[0]['day_price'] - stock_df.iloc[-1]['day_price']),
-        "average_volume": int(stock_df['volume'].mean()) if not pd.isna(stock_df['volume'].mean()) else 0
+        "highest_price": sanitize_float(stock_df['day_high'].max(), 0.0),
+        "lowest_price": sanitize_float(stock_df['day_low'].min(), 0.0),
+        "average_price": sanitize_float(stock_df['day_price'].mean(), 0.0),
+        "current_price": sanitize_float(stock_df.iloc[0]['day_price'], 0.0),
+        "price_change": sanitize_float(stock_df.iloc[0]['day_price'] - stock_df.iloc[-1]['day_price'], 0.0),
+        "average_volume": int(stock_df['volume'].mean()) if pd.notna(stock_df['volume'].mean()) and np.isfinite(stock_df['volume'].mean()) else 0
     }
 
 
@@ -562,14 +583,18 @@ def get_history(symbol: str, days: int = 30):
     for _, row in stock_df.iterrows():
         change_pct = row['changepct']
         if isinstance(change_pct, str):
-            change_pct = float(change_pct.replace('%', ''))
+            try:
+                change_pct = float(change_pct.replace('%', ''))
+            except:
+                change_pct = 0.0
+        
         history.append({
             "date": row['date'].strftime('%Y-%m-%d'),
-            "price": float(row['day_price']),
-            "low": float(row['day_low']) if pd.notna(row['day_low']) else float(row['day_price']),
-            "high": float(row['day_high']) if pd.notna(row['day_high']) else float(row['day_price']),
-            "volume": int(row['volume']) if not pd.isna(row['volume']) else 0,
-            "change_percent": float(change_pct) if pd.notna(change_pct) else 0.0
+            "price": sanitize_float(row['day_price'], 0.0),
+            "low": sanitize_float(row['day_low'], sanitize_float(row['day_price'], 0.0)),
+            "high": sanitize_float(row['day_high'], sanitize_float(row['day_price'], 0.0)),
+            "volume": int(row['volume']) if pd.notna(row['volume']) and np.isfinite(row['volume']) else 0,
+            "change_percent": sanitize_float(change_pct, 0.0)
         })
 
     return {"symbol": symbol, "name": stock_df.iloc[0]['name'], "data": history}
