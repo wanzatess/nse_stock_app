@@ -1,6 +1,7 @@
 """
-NSE Stock Prediction Service (ULTRA MEMORY OPTIMIZED)
-This service loads the model ONLY when prediction is requested, then unloads it
+NSE Stock Prediction Service (MODEL LOADED AT STARTUP)
+Loads model once at startup and keeps it in memory
+Should work now that data service only uses 150MB
 """
 
 from fastapi import FastAPI, HTTPException
@@ -11,7 +12,6 @@ import os
 import requests
 import pickle
 import joblib
-import gc
 
 # ------------------------------
 # FASTAPI APP
@@ -30,6 +30,11 @@ app.add_middleware(
 )
 
 # ------------------------------
+# GLOBAL VARIABLES
+# ------------------------------
+model = None  # Will be loaded at startup
+
+# ------------------------------
 # PATHS
 # ------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,7 +44,7 @@ HF_MODEL_URL = "https://huggingface.co/wanzatess/nse_stock_model/resolve/main/st
 # ------------------------------
 # HELPER FUNCTIONS
 # ------------------------------
-def download_model_if_needed():
+def download_model():
     """Download model from HuggingFace if not present"""
     if os.path.exists(MODEL_PATH):
         print(f"📦 Model file exists: {os.path.getsize(MODEL_PATH) / 1024 / 1024:.2f} MB")
@@ -72,31 +77,115 @@ def download_model_if_needed():
         return False
 
 
-def load_and_predict(features: list):
-    """
-    Load model, make prediction, then immediately unload
-    This keeps memory usage low by not keeping model in RAM
-    """
-    model = None
+def load_model():
+    """Load model into memory"""
+    global model
+    
+    print(f"📂 Loading model from: {MODEL_PATH}")
+    
     try:
-        print(f"🔄 Loading model for prediction...")
-        
-        # Load model
+        # Try joblib first
+        model = joblib.load(MODEL_PATH)
+        print(f"✅ Model loaded with joblib: {type(model)}")
+    except Exception as e1:
+        print(f"⚠️ joblib failed: {e1}")
         try:
-            model = joblib.load(MODEL_PATH)
-        except Exception as e1:
-            print(f"⚠️ joblib failed: {e1}, trying pickle...")
+            # Try pickle
             with open(MODEL_PATH, 'rb') as f:
                 model = pickle.load(f)
-        
-        print(f"✅ Model loaded: {type(model)}")
-        
-        # Make prediction
-        features_array = np.array(features).reshape(1, -1)
+            print(f"✅ Model loaded with pickle: {type(model)}")
+        except Exception as e2:
+            print(f"❌ All loading methods failed")
+            print(f"   joblib error: {e1}")
+            print(f"   pickle error: {e2}")
+            model = None
+            return False
+    
+    # Test the model
+    if model is not None:
+        if hasattr(model, 'predict'):
+            print(f"✅ Model has predict method")
+        if hasattr(model, 'predict_proba'):
+            print(f"✅ Model has predict_proba method")
+        return True
+    
+    return False
+
+
+# ------------------------------
+# REQUEST MODELS
+# ------------------------------
+class PredictRequest(BaseModel):
+    features: list
+    symbol: str = None
+
+
+# ------------------------------
+# API ROUTES
+# ------------------------------
+@app.get("/")
+def read_root():
+    return {
+        "service": "NSE Stock Prediction Service",
+        "status": "active",
+        "model_loaded": model is not None,
+        "memory_mode": "persistent (model loaded at startup)"
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok" if model is not None else "degraded",
+        "model_loaded": model is not None,
+        "model_type": str(type(model)) if model else None
+    }
+
+
+@app.get("/model-status")
+def model_status():
+    return {
+        "model_loaded": model is not None,
+        "model_path": MODEL_PATH,
+        "model_file_exists": os.path.exists(MODEL_PATH),
+        "mode": "persistent (loaded at startup)"
+    }
+
+
+@app.get("/predict")
+def predict_get_info():
+    return {
+        "message": "Use POST method",
+        "usage": {
+            "method": "POST",
+            "body": {"features": [100, 102, 103, 15, -5, 0.02, 0.015], "symbol": "ABSA"}
+        }
+    }
+
+
+@app.post("/predict")
+def predict(request: PredictRequest):
+    """
+    Make prediction using pre-loaded model
+    Fast because model is already in memory
+    """
+    if len(request.features) != 7:
+        raise HTTPException(
+            status_code=400, 
+            detail="Expected 7 features: [day_price, ma_5, ma_10, pct_from_12m_low, pct_from_12m_high, daily_return, daily_volatility]"
+        )
+    
+    if model is None:
+        raise HTTPException(
+            status_code=503, 
+            detail="Model not loaded. Check /model-status for details."
+        )
+    
+    try:
+        # Make prediction (fast since model is already loaded)
+        features_array = np.array(request.features).reshape(1, -1)
         prediction = model.predict(features_array)
         raw_pred = prediction[0]
-        
-        result = None
         
         # Get probabilities if available
         if hasattr(model, 'predict_proba'):
@@ -128,112 +217,22 @@ def load_and_predict(features: list):
                 "probabilities": None
             }
         
-        print(f"✅ Prediction complete: {pred_value}")
-        return result
+        response = {
+            "prediction": result,
+            "features_used": request.features
+        }
+        
+        if request.symbol:
+            response["symbol"] = request.symbol
+        
+        return response
         
     except Exception as e:
         print(f"❌ Prediction error: {e}")
-        return None
-        
-    finally:
-        # CRITICAL: Unload model from memory immediately
-        if model is not None:
-            del model
-            gc.collect()
-            print(f"🗑️ Model unloaded from memory")
-
-
-# ------------------------------
-# REQUEST MODELS
-# ------------------------------
-class PredictRequest(BaseModel):
-    features: list
-    symbol: str = None
-
-
-# ------------------------------
-# API ROUTES
-# ------------------------------
-@app.get("/")
-def read_root():
-    return {
-        "service": "NSE Stock Prediction Service",
-        "status": "active",
-        "model_file_exists": os.path.exists(MODEL_PATH),
-        "memory_mode": "on-demand (model loads per request)"
-    }
-
-
-@app.get("/health")
-def health():
-    model_exists = os.path.exists(MODEL_PATH)
-    return {
-        "status": "ok" if model_exists else "degraded",
-        "model_file_exists": model_exists,
-        "model_size_mb": os.path.getsize(MODEL_PATH) / 1024 / 1024 if model_exists else 0
-    }
-
-
-@app.get("/model-status")
-def model_status():
-    model_exists = os.path.exists(MODEL_PATH)
-    return {
-        "model_file_exists": model_exists,
-        "model_path": MODEL_PATH,
-        "model_size_mb": os.path.getsize(MODEL_PATH) / 1024 / 1024 if model_exists else 0,
-        "mode": "on-demand loading (not kept in memory)"
-    }
-
-
-@app.post("/model-download")
-def model_download():
-    """Trigger model download"""
-    if os.path.exists(MODEL_PATH):
-        return {"ok": True, "message": "Model already downloaded"}
-    
-    success = download_model_if_needed()
-    if success:
-        return {"ok": True, "message": "Model downloaded successfully"}
-    else:
-        raise HTTPException(status_code=500, detail="Model download failed")
-
-
-@app.post("/predict")
-def predict(request: PredictRequest):
-    """
-    Make prediction by loading model on-demand
-    Model is loaded, used, then immediately unloaded to save memory
-    """
-    if len(request.features) != 7:
         raise HTTPException(
-            status_code=400, 
-            detail="Expected 7 features: [day_price, ma_5, ma_10, pct_from_12m_low, pct_from_12m_high, daily_return, daily_volatility]"
+            status_code=500, 
+            detail=f"Prediction failed: {str(e)}"
         )
-    
-    # Download model if needed
-    if not os.path.exists(MODEL_PATH):
-        print("📥 Model not found, downloading...")
-        if not download_model_if_needed():
-            raise HTTPException(status_code=503, detail="Model download failed")
-    
-    # Load model, predict, unload
-    prediction_result = load_and_predict(request.features)
-    
-    if prediction_result is None:
-        raise HTTPException(
-            status_code=503, 
-            detail="Prediction failed. Model may be corrupted."
-        )
-    
-    response = {
-        "prediction": prediction_result,
-        "features_used": request.features
-    }
-    
-    if request.symbol:
-        response["symbol"] = request.symbol
-    
-    return response
 
 
 # ------------------------------
@@ -241,17 +240,30 @@ def predict(request: PredictRequest):
 # ------------------------------
 @app.on_event("startup")
 async def startup_event():
-    print("\n🚀 NSE PREDICTION SERVICE (ULTRA MEMORY OPTIMIZED)")
-    print("💾 Memory Strategy: Load model only when needed, unload immediately")
-    print("📦 Checking if model file exists...")
+    global model
     
-    if os.path.exists(MODEL_PATH):
-        size_mb = os.path.getsize(MODEL_PATH) / 1024 / 1024
-        print(f"✅ Model file found: {size_mb:.2f} MB")
+    print("\n🚀 NSE PREDICTION SERVICE - STARTING UP")
+    print("💾 Memory Strategy: Load model at startup, keep in memory")
+    print("📊 This should work now that data service only uses 150MB\n")
+    
+    # Download model if needed
+    if not os.path.exists(MODEL_PATH):
+        print("📥 Model file not found, downloading...")
+        if not download_model():
+            print("❌ STARTUP FAILED: Could not download model")
+            print("⚠️ Service will start but predictions will fail")
+            return
+    
+    # Load model into memory
+    print("🔄 Loading model into memory...")
+    if load_model():
+        print("✅ Model loaded successfully!")
+        print(f"📊 Model ready for predictions")
     else:
-        print("⚠️ Model file not found - will download on first prediction request")
+        print("❌ STARTUP FAILED: Could not load model")
+        print("⚠️ Service will start but predictions will fail")
     
-    print("✅ Prediction service ready (model NOT loaded in memory)\n")
+    print("\n✅ Prediction service ready\n")
 
 
 if __name__ == "__main__":
