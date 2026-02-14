@@ -67,15 +67,29 @@ def reload_data_if_needed():
 
     current_modified = os.path.getmtime(DATA_PATH)
     if last_modified is None or current_modified > last_modified:
-        print(f"🔄 Loading ALL 12 years of data from: {DATA_PATH}")
+        print(f"🔄 Loading data from: {DATA_PATH}")
         
-        # Load essential columns only, but ALL years of data
+        # Load essential columns only
         essential_cols = ['date', 'code', 'name', 'day_price', 'previous', 'change', 
                         'changepct', 'volume', 'day_low', 'day_high', 'ma_5', 'ma_10',
                         'pct_from_12m_low', 'pct_from_12m_high', 'daily_return', 'daily_volatility']
         
         df = pd.read_csv(DATA_PATH, low_memory=False, usecols=essential_cols)
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        
+        # MEMORY OPTIMIZATION: Keep only recent years
+        # Change this cutoff date to load more/less data
+        # Options: 
+        # - 2018-01-01 = 7 years (~120MB)
+        # - 2020-01-01 = 5 years (~90MB)
+        # - 2022-01-01 = 3 years (~60MB)
+        CUTOFF_DATE = pd.Timestamp('2018-01-01')
+        
+        original_rows = len(df)
+        df = df[df["date"] >= CUTOFF_DATE]
+        filtered_rows = len(df)
+        
+        print(f"📅 Filtered data: {original_rows:,} rows → {filtered_rows:,} rows (from {CUTOFF_DATE.strftime('%Y-%m-%d')})")
         
         # Optimize data types to use less memory
         df['code'] = df['code'].astype('category')
@@ -87,8 +101,10 @@ def reload_data_if_needed():
         
         last_modified = current_modified
         
+        memory_mb = df.memory_usage(deep=True).sum() / 1024 / 1024
         print(f"✅ Data loaded successfully")
-        print(f"📊 Stocks: {df['code'].nunique()}, Records: {len(df)}, Memory: {df.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB")
+        print(f"📊 Stocks: {df['code'].nunique()}, Records: {len(df):,}, Memory: {memory_mb:.2f} MB")
+        print(f"📆 Date range: {df['date'].min().strftime('%Y-%m-%d')} to {df['date'].max().strftime('%Y-%m-%d')}")
 
 
 # ------------------------------
@@ -311,7 +327,7 @@ async def predict_proxy(request: PredictRequest):
         response = requests.post(
             f"{PREDICTION_SERVICE_URL}/predict",
             json={"features": features, "symbol": symbol},
-            timeout=30
+            timeout=120  # Increased to 120s for first prediction (model download)
         )
         response.raise_for_status()
         prediction_data = response.json()
@@ -386,7 +402,7 @@ async def predict_proxy(request: PredictRequest):
 @app.on_event("startup")
 async def startup_event():
     print("\n🚀 NSE STOCK DATA SERVICE - STARTING UP")
-    print("📊 Loading ALL 12 years of historical data")
+    print("📊 Loading recent years of historical data (2018+)")
     print("💾 Memory: Optimized for Render free tier (no model)")
     reload_data_if_needed()
     print("✅ Data service ready!\n")
