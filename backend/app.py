@@ -62,15 +62,13 @@ def load_pickle_file(filepath):
     is_gzipped = (first_bytes[:2] == b'\x1f\x8b')
     
     # Prefer joblib.load first (handles common compressed formats like zlib)
-    # Use mmap_mode='r' to memory-map large numpy arrays where possible so we
-    # avoid loading the full model into RAM at once on low-memory hosts.
-    print(f"🔧 Trying joblib.load (with mmap_mode='r')...")
+    print(f"🔧 Trying joblib.load...")
     try:
-        loaded_model = joblib.load(filepath, mmap_mode='r')
-        print(f"✅ Loaded with joblib.load (mmap)")
+        loaded_model = joblib.load(filepath)
+        print(f"✅ Loaded with joblib.load")
         return loaded_model
     except Exception as e:
-        print(f"⚠️ joblib (mmap) failed: {e}")
+        print(f"⚠️ joblib failed: {e}")
 
     # Try gzip (gzip wrapper + pickle)
     if is_gzipped:
@@ -352,7 +350,11 @@ def predict(request: PredictRequest):
         stock["daily_volatility"]
     ]
 
-    prediction_result = predict_with_model(features)
+    try:
+        prediction_result = predict_with_model(features)
+    except Exception as e:
+        print(f"❌ Prediction error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
     
     return {
         "symbol": symbol,
@@ -451,18 +453,20 @@ def get_top_stocks(criteria: str = "gainers", limit: int = 10):
         # Get 'buy' signals via model predictions
         predictions = []
         for _, row in latest_data.iterrows():
-            features = [
-                row['day_price'], row['ma_5'], row['ma_10'],
-                row['pct_from_12m_low'], row['pct_from_12m_high'],
-                row['daily_return'], row['daily_volatility']
-            ]
             try:
+                features = [
+                    row['day_price'], row['ma_5'], row['ma_10'],
+                    row['pct_from_12m_low'], row['pct_from_12m_high'],
+                    row['daily_return'], row['daily_volatility']
+                ]
                 pred = predict_with_model(features)
                 # Adjust this logic based on your model's output
                 # Assuming prediction > 0 means buy signal
-                if pred and pred.get('prediction', 0) > 0:
+                if pred and isinstance(pred, dict) and pred.get('prediction', 0) > 0:
                     predictions.append(row)
-            except:
+            except Exception as e:
+                # Log the error but continue processing other stocks
+                print(f"⚠️ Prediction failed for {row.get('code', 'unknown')}: {e}")
                 continue
         result = pd.DataFrame(predictions).head(limit) if predictions else pd.DataFrame()
     else:
