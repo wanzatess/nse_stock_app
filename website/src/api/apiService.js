@@ -6,7 +6,7 @@ const baseURL = (typeof window !== 'undefined' && (window.location.hostname === 
 
 const api = axios.create({
   baseURL,
-  timeout: 10000,
+  timeout: 60000,
 });
 
 export const getMarketOverview = () => api.get("/market-overview");

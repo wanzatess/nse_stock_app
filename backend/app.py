@@ -123,16 +123,19 @@ def download_model():
         print(f"📦 Found existing model file: {MODEL_PATH}")
         print(f"📊 File size: {os.path.getsize(MODEL_PATH) / 1024 / 1024:.2f} MB")
         try:
-            model = load_pickle_file(MODEL_PATH)
+            loaded_model = load_pickle_file(MODEL_PATH)
             print(f"✅ Model loaded successfully!")
-            print(f"🔍 Model type: {type(model)}")
+            print(f"🔍 Model type: {type(loaded_model)}")
             
             # Test the model quickly
-            if hasattr(model, 'predict'):
+            if hasattr(loaded_model, 'predict'):
                 print(f"✅ Model has predict method")
-            if hasattr(model, 'predict_proba'):
+            if hasattr(loaded_model, 'predict_proba'):
                 print(f"✅ Model has predict_proba method")
             
+            # IMPORTANT: Set the global model variable
+            model = loaded_model
+            print(f"✅ Global model variable set successfully")
             return
         except Exception as e:
             print(f"⚠️ Failed to load existing model: {e}")
@@ -182,16 +185,20 @@ def download_model():
             first_bytes = f.read(10)
             print(f"🔍 File signature: {first_bytes[:4].hex()}")
         
-        # Load the model using intelligent loader (with mmap if available)
-        model = load_pickle_file(MODEL_PATH)
+        # Load the model using intelligent loader
+        loaded_model = load_pickle_file(MODEL_PATH)
         print(f"✅ Model loaded successfully!")
-        print(f"🔍 Model type: {type(model)}")
+        print(f"🔍 Model type: {type(loaded_model)}")
         
         # Test the model
-        if hasattr(model, 'predict'):
+        if hasattr(loaded_model, 'predict'):
             print(f"✅ Model has predict method")
-        if hasattr(model, 'predict_proba'):
+        if hasattr(loaded_model, 'predict_proba'):
             print(f"✅ Model has predict_proba method")
+        
+        # IMPORTANT: Set the global model variable
+        model = loaded_model
+        print(f"✅ Global model variable set successfully")
         
     except Exception as e:
         print(f"❌ Failed to download/load model: {e}")
@@ -605,11 +612,23 @@ def get_history(symbol: str, days: int = 30):
 # ------------------------------
 @app.on_event("startup")
 async def startup_event():
-    # Do not force model download at startup on low-memory hosts (e.g. Render free tier).
-    # Instead load data only and defer model download until the first prediction request.
     print("\n🚀 NSE STOCK PREDICTION API - STARTING UP")
     reload_data_if_needed()
-    print("✅ Data loaded; model will be loaded on first prediction if needed.\n")
+    print("📊 Data loading complete")
+    
+    # Try to load model but don't fail if it doesn't work
+    print("🤖 Attempting to load model...")
+    try:
+        download_model()
+        if model is not None:
+            print("✅ Model loaded successfully and ready for predictions")
+        else:
+            print("⚠️ Model not loaded - predictions will use fallback heuristics")
+    except Exception as e:
+        print(f"⚠️ Model loading failed: {e}")
+        print("⚠️ Predictions will use fallback heuristics")
+    
+    print("✅ API startup complete\n")
 
 
 if __name__ == "__main__":
