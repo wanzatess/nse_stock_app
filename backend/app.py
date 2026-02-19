@@ -71,8 +71,9 @@ def reload_data_if_needed():
         
         # Load essential columns only
         essential_cols = ['date', 'code', 'name', 'day_price', 'previous', 'change', 
-                        'changepct', 'volume', 'day_low', 'day_high', 'ma_5', 'ma_10',
-                        'pct_from_12m_low', 'pct_from_12m_high', 'daily_return', 'daily_volatility']
+                        'changepct', 'volume', 'day_low', 'day_high', '12m_low', '12m_high',
+                        'ma_5', 'ma_10', 'pct_from_12m_low', 'pct_from_12m_high', 
+                        'daily_return', 'daily_volatility']
         
         df = pd.read_csv(DATA_PATH, low_memory=False, usecols=essential_cols)
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -350,6 +351,8 @@ async def predict_proxy(request: PredictRequest):
             "change_percent": sanitize_float(change_pct, 0.0),
             "day_low": sanitize_float(row["day_low"], sanitize_float(row["day_price"], 0.0)),
             "day_high": sanitize_float(row["day_high"], sanitize_float(row["day_price"], 0.0)),
+            "12m_low": sanitize_float(row["12m_low"], 0.0),
+            "12m_high": sanitize_float(row["12m_high"], 0.0),
             "volume": int(row["volume"]) if pd.notna(row["volume"]) and np.isfinite(row["volume"]) else 0,
             "prediction": prediction_data["prediction"],
             "features_used": {
@@ -382,6 +385,8 @@ async def predict_proxy(request: PredictRequest):
             "change_percent": sanitize_float(change_pct, 0.0),
             "day_low": sanitize_float(row["day_low"], sanitize_float(row["day_price"], 0.0)),
             "day_high": sanitize_float(row["day_high"], sanitize_float(row["day_price"], 0.0)),
+            "12m_low": sanitize_float(row["12m_low"], 0.0),
+            "12m_high": sanitize_float(row["12m_high"], 0.0),
             "volume": int(row["volume"]) if pd.notna(row["volume"]) and np.isfinite(row["volume"]) else 0,
             "prediction": None,
             "prediction_error": "Prediction service temporarily unavailable",
