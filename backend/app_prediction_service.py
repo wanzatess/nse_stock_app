@@ -39,7 +39,7 @@ model = None  # Will be loaded at startup
 # ------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(BASE_DIR, "models", "stock_model_compressed.pkl")
-HF_MODEL_URL = "https://huggingface.co/wanzatess/nse_stock_model/resolve/main/stock_model_compressed.pkl"
+HF_MODEL_URL = "https://huggingface.co/wanzatess/nse_stock_model/resolve/main/stock_model.pkl"
 
 # ------------------------------
 # HELPER FUNCTIONS

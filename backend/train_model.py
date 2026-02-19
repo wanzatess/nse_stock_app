@@ -8,7 +8,7 @@ import os
 print("🚀 Script started...")
 
 # Paths
-data_path = "../data/processed/NSE_20_stocks_2013_2025_features_target.csv"
+data_path = "../data/processed/NSE_20_stocks_2022_2026.csv"
 model_folder = "models"
 os.makedirs(model_folder, exist_ok=True)
 model_path = os.path.join(model_folder, "stock_model.pkl")
